@@ -244,7 +244,10 @@ class _VehicleFleetViewState extends State<VehicleFleetView> {
     } catch (error) {
       debugPrint('Unable to delete vehicle: $error');
       if (mounted) {
-        EnterpriseToasts.error(context, 'Unable to delete vehicle. Please try again.');
+        EnterpriseToasts.error(
+          context,
+          'Unable to delete vehicle. Please try again.',
+        );
       }
     }
   }
@@ -697,7 +700,9 @@ class _VehicleFleetViewState extends State<VehicleFleetView> {
                                     message = decoded['message'].toString();
                                   }
                                 } catch (error) {
-                                  debugPrint('Unable to parse incident error response: $error');
+                                  debugPrint(
+                                    'Unable to parse incident error response: $error',
+                                  );
                                 }
                                 _showSnackBar(message, Colors.red);
                               }
@@ -1661,11 +1666,7 @@ class _VehicleFleetViewState extends State<VehicleFleetView> {
                         isDark: isDark,
                         width: 170,
                         value: _statusFilter,
-                        values: [
-                          'All',
-                          'Due Maintenance',
-                          'Due Repair',
-                        ],
+                        values: ['All', 'Due Maintenance', 'Due Repair'],
                         onChanged: (value) {
                           setState(() {
                             _statusFilter = value ?? 'All';
@@ -2326,7 +2327,7 @@ class _RegisterVehicleDialogState extends State<RegisterVehicleDialog> {
                         style: TextStyle(color: textColor),
                         decoration: _fieldStyle(
                           context: context,
-                          label: 'Model Year',
+                          label: 'Date Acquired',
                           icon: Icons.date_range_outlined,
                         ),
                         validator: (val) => val!.isEmpty ? "Required" : null,
