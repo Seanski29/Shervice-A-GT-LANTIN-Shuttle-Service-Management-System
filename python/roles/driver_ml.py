@@ -147,23 +147,27 @@ def generate_ground_truth_labels(row):
         1,
     )
     average_late_minutes = late_mins / attendance_days
-    
-    # 1. Critical fail conditions
-    # Use an average per attendance day. A lifetime total would classify
-    # nearly every driver as late after several months of normal attendance.
-    if absences >= 3 or average_late_minutes > 10 or punctuality < 3.0:
+
+    # 1. Critical tardiness / attendance fail conditions
+    if absences >= 3 or average_late_minutes > 15 or punctuality < 3.0:
         return 'Tardiness Risk'
-        
+
     # 2. Safety fail conditions
     elif safety < 3.5:
         return 'Safety Risk'
-        
-    # 3. High performer conditions (Now requires high professionalism AND actual attendance data)
-    elif safety >= 4.5 and punctuality >= 4.5 and professionalism >= 4.0 and average_late_minutes <= 3 and absences == 0 and present > 0:
+
+    # 3. High performer conditions (requires high scores AND actual attendance)
+    elif (
+        safety >= 4.5
+        and punctuality >= 4.5
+        and professionalism >= 4.0
+        and average_late_minutes <= 3
+        and absences == 0
+        and present > 0
+    ):
         return 'Elite Performer'
 
-    # 4. Consistent drivers: reliable attendance and performance, but not
-    # enough safety score to qualify for the Elite tier.
+    # 4. Consistent drivers: reliable attendance and performance, below Elite tier
     elif (
         safety >= 4.0
         and punctuality >= 4.0
@@ -174,8 +178,8 @@ def generate_ground_truth_labels(row):
         and row['trips_amount'] > 0
     ):
         return 'Consistent Performer'
-        
-    # 5. Default middle-ground
+
+    # 5. Default middle-ground (includes 6 < average_late_minutes <= 15)
     else:
         return 'Needs Review'
 def train_driver_classification_model(force: bool = False):
@@ -234,7 +238,10 @@ def _train_driver_classification_model():
     evaluation_model = KNeighborsClassifier(n_neighbors=3, weights='distance')
     evaluation_model.fit(X_train_scaled, y_train)
     
-    y_pred = evaluation_model.predict(X_test)
+    # The estimator was fitted on standardized values.  Predicting with the
+    # raw holdout matrix makes the reported score invalid (and can make KNN
+    # appear much better or worse depending on feature scale).
+    y_pred = evaluation_model.predict(X_test_scaled)
     accuracy = accuracy_score(y_test, y_pred)
     
     print(f"\n--- Model Training Complete ---")

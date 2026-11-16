@@ -42,9 +42,11 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+
 # --- Label adapter kept for callers of this evaluation script ---
 def generate_ground_truth_labels(row):
     return driver_ml.generate_ground_truth_labels(row)
+
 
 def evaluate_legacy_knn_split():
     print("\n=======================================================")
@@ -63,11 +65,11 @@ def evaluate_legacy_knn_split():
     df['target_label'] = df.apply(generate_ground_truth_labels, axis=1)
 
     feature_cols = [
-        'safety_score', 'punctuality_score', 'professionalism_score', 
-        'trips_amount', 'total_minutes_late', 'present_count', 
+        'safety_score', 'punctuality_score', 'professionalism_score',
+        'trips_amount', 'total_minutes_late', 'present_count',
         'half_day_count', 'absent_count'
     ]
-    
+
     X = df[feature_cols].values
     y = df['target_label'].values
 
@@ -104,12 +106,12 @@ def evaluate_legacy_toy_mlr():
 
     # Legacy standalone baseline retained for historical comparison.
     X = np.array([
-        [8, 120, 14], [1, 15, 1], [5, 95, 8], [2, 40, 2], [9, 180, 22], 
-        [1, 8, 0], [6, 110, 11], [3, 55, 3], [10, 0, 0], [8, 60, 4]     
+        [8, 120, 14], [1, 15, 1], [5, 95, 8], [2, 40, 2], [9, 180, 22],
+        [1, 8, 0], [6, 110, 11], [3, 55, 3], [10, 0, 0], [8, 60, 4]
     ])
-    
+
     y = np.array([
-        12.0, 310.0, 45.0, 240.0, 2.0, 350.0, 25.0, 180.0, 280.0, 140.0  
+        12.0, 310.0, 45.0, 240.0, 2.0, 350.0, 25.0, 180.0, 280.0, 140.0
     ])
 
     scaler = StandardScaler()
@@ -124,7 +126,7 @@ def evaluate_legacy_toy_mlr():
 
     mae = mean_absolute_error(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    
+
     try:
         r2 = r2_score(y_test, y_pred)
     except Exception:
@@ -183,7 +185,12 @@ def evaluate_objective_3_1_knn_cross_validated():
 
 
 def _driver_temporal_rows():
-    """Build prior-month features and next-month labels for honest testing."""
+    """Build trailing-history features and current-month labels.
+
+    Uses a 30-day prior window immediately before the month being predicted so
+    each snapshot captures genuine month-over-month behavioral shifts rather
+    than smoothed multi-month averages.
+    """
     drivers = pd.DataFrame(driver_ml._fetch_all('driver_profile', 'driver_id'))
     evaluations = pd.DataFrame(driver_ml._fetch_all(
         'evaluation',
@@ -211,9 +218,10 @@ def _driver_temporal_rows():
         start = period.start_time
         end = period.end_time
         if historical:
-            evals = evaluations[(evaluations.driver_id == driver_id) & (evaluations['_date'] < start)] if not evaluations.empty else evaluations
-            trip_rows = trips[(trips.driver_id == driver_id) & (trips['_date'] < start)] if not trips.empty else trips
-            att = attendance[(attendance.driver_id == driver_id) & (attendance['_date'] < start)] if not attendance.empty else attendance
+            history_start = start - pd.Timedelta(days=30)
+            evals = evaluations[(evaluations.driver_id == driver_id) & (evaluations['_date'] >= history_start) & (evaluations['_date'] < start)] if not evaluations.empty else evaluations
+            trip_rows = trips[(trips.driver_id == driver_id) & (trips['_date'] >= history_start) & (trips['_date'] < start)] if not trips.empty else trips
+            att = attendance[(attendance.driver_id == driver_id) & (attendance['_date'] >= history_start) & (attendance['_date'] < start)] if not attendance.empty else attendance
         else:
             evals = evaluations[(evaluations.driver_id == driver_id) & (evaluations['_date'] >= start) & (evaluations['_date'] <= end)] if not evaluations.empty else evaluations
             trip_rows = trips[(trips.driver_id == driver_id) & (trips['_date'] >= start) & (trips['_date'] <= end)] if not trips.empty else trips
@@ -273,6 +281,7 @@ def _driver_temporal_rows():
                     and target['present_count'] == 0):
                 continue
             rows.append({
+                'driver_id': driver_id,
                 'period': period,
                 'features': [prior[column] for column in [
                     'safety_score', 'punctuality_score', 'professionalism_score',
@@ -320,6 +329,20 @@ def evaluate_objective_3_1_temporal():
     model.fit(X_train, y_train)
     predictions = model.predict(X_test)
 
+    # Sanity check for temporal data: persistence baseline accuracy.
+    prior_labels = []
+    actual_labels = []
+    for row in test_rows:
+        previous = [candidate for candidate in train_rows
+                    if candidate['driver_id'] == row['driver_id']
+                    and candidate['period'] < row['period']]
+        if previous:
+            prior_labels.append(previous[-1]['label'])
+            actual_labels.append(row['label'])
+    persistence_accuracy = (
+        accuracy_score(actual_labels, prior_labels) if actual_labels else float('nan')
+    )
+
     train_distribution = pd.Series(y_train).value_counts().sort_index()
     test_distribution = pd.Series(y_test).value_counts().sort_index()
     train_periods = sorted({row['period'] for row in train_rows})
@@ -335,6 +358,7 @@ def evaluate_objective_3_1_temporal():
     print(f"Training through                 : {split_period - 1}")
     print(f"Testing from                     : {split_period}")
     print(f"Accuracy                         : {accuracy_score(y_test, predictions) * 100:.2f}%")
+    print(f"Persistence baseline accuracy    : {persistence_accuracy * 100:.2f}%")
     print(f"Macro Precision                  : {precision_score(y_test, predictions, average='macro', zero_division=0):.4f}")
     print(f"Macro Recall                     : {recall_score(y_test, predictions, average='macro', zero_division=0):.4f}")
     print(f"Macro F1-Score                   : {f1_score(y_test, predictions, average='macro', zero_division=0):.4f}")
@@ -344,6 +368,12 @@ def evaluate_objective_3_1_temporal():
     print(test_distribution.to_string())
     print("\nClassification Report:")
     print(classification_report(y_test, predictions, zero_division=0))
+
+    print("Per-month accuracy:")
+    for period in test_periods:
+        indexes = [index for index, row in enumerate(test_rows)
+                   if row['period'] == period]
+        print(f"  {period}: {accuracy_score([y_test[i] for i in indexes], [predictions[i] for i in indexes]) * 100:.2f}% ({len(indexes)} snapshots)")
 
 
 def evaluate_objective_3_2_production():
@@ -359,9 +389,7 @@ def evaluate_objective_3_2_production():
     print("Status                         : " + ("trained on live history" if trained else "insufficient history; workload baseline used"))
 
 
-# Replace the legacy toy-data evaluator with a live, chronological evaluator.
 def _maintenance_training_rows():
-    # predictive_ml uses an injected client in the same way as the Flask app.
     predictive_ml.supabase = supabase
     vehicles, trips, repairs = predictive_ml._load_history()
     trips_by_vehicle, repairs_by_vehicle = {}, {}
@@ -415,6 +443,10 @@ def evaluate_objective_3_2_live():
     mlr = LinearRegression().fit(X_train_scaled, y_train)
     mlr_pred = mlr.predict(X_test_scaled)
 
+    print(f"Intercept (beta_0)               : {mlr.intercept_:.4f}")
+    for feat_name, coef in zip(predictive_ml.FEATURE_NAMES, mlr.coef_):
+        print(f"Coef [{feat_name:<27}]: {coef:.4f}")
+
     rf = RandomForestRegressor(
         n_estimators=160, min_samples_leaf=2, random_state=42
     ).fit(X_train, y_train)
@@ -446,7 +478,6 @@ def evaluate_objective_3_3_kmeans():
     print("OBJECTIVE 3.3: DESTINATION DEMAND (K-MEANS) EVALUATION")
     print("=======================================================")
 
-    # Replicates route_ml_2.py feature extraction
     trips_res = supabase.table('trip_schedule').select('route_name, passenger_count, vehicle_id').execute()
     raw_trips = trips_res.data or []
 
@@ -455,7 +486,7 @@ def evaluate_objective_3_3_kmeans():
         r = canonical_route_name(t.get('route_name'))
         if r not in route_stats:
             route_stats[r] = {'trips': 0, 'passengers': 0, 'vehicles': set()}
-        
+
         route_stats[r]['trips'] += 1
         pax = t.get('passenger_count')
         try:
